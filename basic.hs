@@ -15,10 +15,8 @@ import qualified Data.HashMap.Strict    as HM
 import qualified Data.Aeson             as JSON
 
 import Control.Monad (replicateM)
-import Control.Applicative ((<$>), (<*>))
+import Control.Applicative ((<$>))
 import Control.Monad.IO.Class (liftIO)
-import Control.Concurrent.MVar (MVar, newMVar, withMVar)
-import Data.IORef (IORef, newIORef, readIORef, writeIORef)
 import qualified Data.Conduit as C
 import qualified Data.Conduit.List as C
 import Network.HTTP.Types (status200, status404)
@@ -26,6 +24,7 @@ import Network.Wai (Application, Request(..), Response(..))
 import Network.Wai.Handler.Warp (run)
 
 import Instances ()
+import Shared (Shared(..), newShared, readShared, modifyShared_, modifyShared)
 
 {- | persistent data structure
  -}
@@ -86,33 +85,6 @@ update k v = SessionStore . HM.insert k v . sessionMap
 
 query :: SessionId -> SessionStore -> Maybe Session
 query k = HM.lookup k . sessionMap
-
-{- | share data type among concurrently threads.
- -}
-data Shared a = Shared
-  { sharedLock  :: MVar ()
-  , sharedState :: IORef a
-  }
-
-newShared :: a -> IO (Shared a)
-newShared a = Shared <$> newMVar () <*> newIORef a
-
-readShared :: Shared a -> IO a
-readShared = readIORef . sharedState
-
-modifyShared :: Shared a -> (a -> IO (a, b)) -> IO b
-modifyShared (Shared lock state) f =
-    withMVar lock $ \_ -> do
-        st <- readIORef state
-        (st', r) <- f st
-        writeIORef state st'
-        return r
-
-modifyShared_ :: Shared a -> (a -> IO a) -> IO ()
-modifyShared_ ss f =
-    modifyShared ss $ \s -> do
-        s' <- f s
-        return (s', ())
 
 {- | HTTP interface
  -}
