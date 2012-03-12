@@ -10,7 +10,7 @@ import Control.Applicative ((<$>), (<*>))
 import Control.Concurrent.MVar (MVar, newMVar, withMVar)
 import Data.IORef (IORef, newIORef, readIORef, writeIORef)
 
-{- | share data type among concurrently threads.
+{- | 为haskell数据类型提供线程安全的包装，写操作序列化、读操作lock-free。
  -}
 data Shared a = Shared
   { sharedLock  :: MVar ()

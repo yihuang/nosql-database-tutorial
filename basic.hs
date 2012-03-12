@@ -1,8 +1,5 @@
 {-# LANGUAGE OverloadedStrings, DeriveGeneric #-}
-
-import System.Random        (randomIO)
 import GHC.Generics         (Generic)
-
 import Data.Monoid          (mempty)
 import Data.Text            (Text)
 import Data.HashMap.Strict  (HashMap)
@@ -14,11 +11,9 @@ import qualified Data.Text              as T
 import qualified Data.HashMap.Strict    as HM
 import qualified Data.Aeson             as JSON
 
-import Control.Monad (replicateM)
-import Control.Applicative ((<$>))
 import Control.Monad.IO.Class (liftIO)
-import qualified Data.Conduit as C
-import qualified Data.Conduit.List as C
+import Data.Conduit ( ($$) )
+import Data.Conduit.List (consume)
 import Network.HTTP.Types (status200, status404)
 import Network.Wai (Application, Request(..), Response(..))
 import Network.Wai.Handler.Warp (run)
@@ -26,7 +21,7 @@ import Network.Wai.Handler.Warp (run)
 import Instances ()
 import Shared (Shared(..), newShared, readShared, modifyShared_, modifyShared)
 
-{- | persistent data structure
+{- | 数据结构
  -}
 data AuthInfo = AuthInfo
   { uid     :: Int
@@ -42,19 +37,13 @@ type SessionId = Text
 newtype SessionStore = SessionStore { sessionMap :: HashMap SessionId Session }
     deriving (Generic)
 
-emptySessionStore :: SessionStore
-emptySessionStore = SessionStore HM.empty
-
-mkSessionId :: IO SessionId
-mkSessionId = T.pack <$> replicateM 32 randomIO
-
-{- | serialisation
+{- | 序列化
  -}
 instance Serialize AuthInfo
 instance Serialize Session
 instance Serialize SessionStore
 
-{- | jsonify
+{- | JSON编/解码
  -}
 instance JSON.FromJSON  AuthInfo
 instance JSON.ToJSON    AuthInfo
@@ -63,19 +52,13 @@ instance JSON.ToJSON    Session
 instance JSON.FromJSON  SessionStore
 instance JSON.ToJSON    SessionStore
 
-{- | insert/delete/update/query
+emptySessionStore :: SessionStore
+emptySessionStore = SessionStore HM.empty
+
+{- | 增删改查 (v代表value、k代表key、m代表map)
  -}
-new :: Session -> SessionStore -> IO (SessionStore, SessionId)
-new v (SessionStore m) = do
-    k <- genKey
-    return (SessionStore $ HM.insert k v m, k)
-  where
-    -- generate session id not exists in SessionStore.
-    genKey = do
-        k <- mkSessionId
-        case HM.lookup k m of
-            Nothing -> return k
-            Just _  -> genKey
+insert :: SessionId -> Session -> SessionStore -> SessionStore
+insert k v = SessionStore . HM.insert k v . sessionMap
 
 delete :: SessionId -> SessionStore -> SessionStore
 delete k = SessionStore . HM.delete k . sessionMap
@@ -86,7 +69,7 @@ update k v = SessionStore . HM.insert k v . sessionMap
 query :: SessionId -> SessionStore -> Maybe Session
 query k = HM.lookup k . sessionMap
 
-{- | HTTP interface
+{- | restful interface
  -}
 app :: Shared SessionStore -> Application
 app store req = case (requestMethod req, pathInfo req) of
@@ -96,10 +79,10 @@ app store req = case (requestMethod req, pathInfo req) of
     ("POST", ["delete", sid]) -> do
         liftIO $ modifyShared_ store (return . delete sid)
         json ()
-    ("POST", ["new"]) -> do
+    ("POST", ["insert", sid]) -> do
         s <- jsonBody
-        sid <- liftIO $ modifyShared store (new s)
-        json sid
+        liftIO $ modifyShared_ store (return . insert sid s)
+        json ()
     ("POST", ["update", sid]) -> do
         s <- jsonBody
         liftIO $ modifyShared_ store (return . update sid s)
@@ -108,7 +91,7 @@ app store req = case (requestMethod req, pathInfo req) of
   where
     json js = return $ ResponseBuilder status200 [("Content-Type", "application/json")] (B.fromLazyByteString $ JSON.encode js)
     jsonBody = do
-        body <- L.fromChunks <$> (requestBody req C.$$ C.consume)
+        body <- fmap L.fromChunks (requestBody req $$ consume)
         case JSON.decode body of
             Just r  -> return r
             Nothing -> fail "json decode failed."

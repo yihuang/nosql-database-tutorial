@@ -2,15 +2,19 @@
 module Instances () where
 
 import GHC.Generics
+
 import Data.Text (Text)
-import qualified Data.Text.Encoding     as T
-import Data.Hashable        (Hashable)
+import qualified Data.Text.Encoding as T
+
+import Data.Hashable (Hashable)
 import Data.HashMap.Strict (HashMap)
 import qualified Data.HashMap.Strict as HM
-import Data.Aeson
+
 import Data.Vector (Vector)
 import qualified Data.Vector as V
-import Data.Serialize       (Serialize(get, put))
+
+import Data.Serialize (Serialize(get, put))
+import Data.Aeson (Value(..))
 import Data.Attoparsec.Number (Number(..))
 
 instance (Eq k, Hashable k, Serialize k, Serialize v) => Serialize (HashMap k v) where
