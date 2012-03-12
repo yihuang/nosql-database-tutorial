@@ -1,25 +1,33 @@
-{-# LANGUAGE OverloadedStrings, DeriveGeneric #-}
-import GHC.Generics         (Generic)
-import Data.Monoid          (mempty)
-import Data.Text            (Text)
-import Data.HashMap.Strict  (HashMap)
-import Data.Serialize       (Serialize)
+{-# LANGUAGE OverloadedStrings, DeriveGeneric, ScopedTypeVariables #-}
+import Prelude           hiding (catch)
+import GHC.Generics             (Generic)
+import System.IO                (hClose)
+import System.Directory         (renameFile)
+import System.Posix.Temp        (mkstemp)
+import Control.Monad            (forever)
+import Control.Monad.IO.Class   (liftIO)
+import Control.Exception        (catch, SomeException)
+import Control.Concurrent       (forkIO, threadDelay)
 
-import qualified Data.ByteString.Lazy   as L
-import qualified Blaze.ByteString.Builder as B
-import qualified Data.Text              as T
-import qualified Data.HashMap.Strict    as HM
-import qualified Data.Aeson             as JSON
+import Data.Maybe               (fromMaybe)
+import Data.Monoid              (mempty)
+import Data.Text                (Text)
+import Data.HashMap.Strict      (HashMap)
+import Data.Serialize           (Serialize, decodeLazy, encodeLazy)
 
-import Control.Monad.IO.Class (liftIO)
-import Data.Conduit ( ($$) )
-import Data.Conduit.List (consume)
-import Network.HTTP.Types (status200, status404)
-import Network.Wai (Application, Request(..), Response(..))
+import qualified Data.ByteString.Lazy       as L
+import qualified Blaze.ByteString.Builder   as B
+import qualified Data.HashMap.Strict        as HM
+import qualified Data.Aeson                 as JSON
+
+import Data.Conduit             ( ($$) )
+import Data.Conduit.List        (consume)
+import Network.HTTP.Types       (status200, status404)
+import Network.Wai              (Application, Request(..), Response(..))
 import Network.Wai.Handler.Warp (run)
 
 import Instances ()
-import Shared (Shared(..), newShared, readShared, modifyShared_, modifyShared)
+import Shared (Shared, newShared, readShared, modifyShared_)
 
 {- | 数据结构
  -}
@@ -72,20 +80,20 @@ query k = HM.lookup k . sessionMap
 {- | restful interface
  -}
 app :: Shared SessionStore -> Application
-app store req = case (requestMethod req, pathInfo req) of
+app shared req = case (requestMethod req, pathInfo req) of
     ("GET", ["get", sid]) -> do
-        s <- liftIO $ readShared store
+        s <- liftIO $ readShared shared
         json $ query sid s
     ("POST", ["delete", sid]) -> do
-        liftIO $ modifyShared_ store (return . delete sid)
+        liftIO $ modifyShared_ shared (return . delete sid)
         json ()
     ("POST", ["insert", sid]) -> do
         s <- jsonBody
-        liftIO $ modifyShared_ store (return . insert sid s)
+        liftIO $ modifyShared_ shared (return . insert sid s)
         json ()
     ("POST", ["update", sid]) -> do
         s <- jsonBody
-        liftIO $ modifyShared_ store (return . update sid s)
+        liftIO $ modifyShared_ shared (return . update sid s)
         json ()
     _ -> return $ ResponseBuilder status404 [] mempty
   where
@@ -96,9 +104,47 @@ app store req = case (requestMethod req, pathInfo req) of
             Just r  -> return r
             Nothing -> fail "json decode failed."
 
+{- | load from disk
+ -}
+loadFromFile :: Serialize a => FilePath -> IO (Maybe a)
+loadFromFile path = do
+    mc <- fmap Just (L.readFile path)
+            `catch` (\(e::SomeException) -> do
+                        print e
+                        return Nothing
+                    )
+    case mc of
+        Nothing -> return Nothing
+        Just c ->
+            case decodeLazy c of
+                Left err -> do putStrLn err
+                               return Nothing
+                Right a  -> return (Just a)
+
+{- | save to disk atomically
+ -}
+dumpToFile :: Serialize a => FilePath -> a -> IO ()
+dumpToFile path a = do
+    (path', h) <- mkstemp "sessionXXXXXX"
+    L.hPut h (encodeLazy a)
+    hClose h
+    renameFile path' path
+
+{- | auto save to disk periodically.
+ -}
+dumpPeridic :: Shared SessionStore -> FilePath -> Int -> IO ()
+dumpPeridic shared path interval =
+    forever $ do
+        threadDelay interval
+        catch (readShared shared >>= dumpToFile path)
+              (\e -> putStrLn $ "uncaught exception in dumpPeridic: "++show (e::SomeException))
+
 {- | main
  -}
 main :: IO ()
 main = do
-    store <- newShared emptySessionStore
-    run 3000 (app store)
+    let dbfile = "./sessionstore" 
+    store <- fmap (fromMaybe emptySessionStore) $ loadFromFile dbfile
+    shared <- newShared store
+    _ <- forkIO $ dumpPeridic shared dbfile 5000000
+    run 3000 (app shared)

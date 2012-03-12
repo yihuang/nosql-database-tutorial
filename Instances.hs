@@ -1,3 +1,4 @@
+{-# Options -fno-warn-orphans #-}
 {-# LANGUAGE DeriveGeneric, StandaloneDeriving #-}
 module Instances () where
 
