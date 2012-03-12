@@ -45,6 +45,7 @@ cabal-version:       >=1.8
 executable nosql-database-tutorial
   -- .hs or .lhs file containing the Main module.
   main-is:             Main.hs
+  ghc-options:         -Wall -O3 -threaded
 
   -- Other library packages from which modules are imported.
   build-depends:       base

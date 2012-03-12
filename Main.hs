@@ -1,3 +1,4 @@
+{-# OPTIONS -funbox-strict-fields #-}
 {-# LANGUAGE OverloadedStrings, DeriveGeneric, ScopedTypeVariables #-}
 import Prelude           hiding (catch)
 import GHC.Generics             (Generic)
@@ -32,13 +33,13 @@ import Shared (Shared, newShared, readShared, modifyShared_)
 {- | 数据结构
  -}
 data AuthInfo = AuthInfo
-  { uid     :: Int
-  , name    :: Text
+  { uid     :: !Int
+  , name    :: !Text
   } deriving (Generic)
 
 data Session = Session
-  { auth    :: AuthInfo
-  , extra   :: HashMap Text JSON.Value
+  { auth    :: !AuthInfo
+  , extra   :: !(HashMap Text JSON.Value)
   } deriving (Generic)
 
 type SessionId = Text
